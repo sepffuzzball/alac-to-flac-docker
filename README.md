@@ -18,6 +18,7 @@ Containerized watcher that converts `.m4a` (ALAC) files to lossless `.flac` file
 - Converts existing `.m4a` files at startup.
 - Replaces each source file with `<same-name>.flac`.
 - Continues watching for new/updated `.m4a` files and converts them automatically.
+- Exposes an HTTP health endpoint at `/healthz` on port `80` for Kubernetes/container probes.
 
 The converter preserves source audio characteristics by carrying through source sample rate and bit depth where available.
 
@@ -29,6 +30,7 @@ The converter preserves source audio characteristics by carrying through source 
 ```bash
 docker build -t alac-to-flac-docker .
 docker run --rm \
+  -p 80:80 \
   -e TZ=America/New_York \
   -e PUID=1000 \
   -e PGID=1000 \

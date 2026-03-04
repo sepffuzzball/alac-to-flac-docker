@@ -1,8 +1,10 @@
 import logging
 import os
-import subprocess
-import time
 import pwd
+import subprocess
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
 
@@ -18,8 +20,33 @@ def get_env(name: str) -> Optional[str]:
     return os.getenv(name) or os.getenv(name.upper())
 
 
-APP_VERSION = get_env("APP_VERSION") or "0.1.1"
+APP_VERSION = get_env("APP_VERSION") or "0.1.2"
 DEFAULT_POLL_INTERVAL_SECONDS = 2.0
+HEALTHCHECK_PORT = 80
+HEALTHCHECK_PATH = "/healthz"
+
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:  # noqa: N802 (stdlib naming)
+        if self.path == HEALTHCHECK_PATH:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"ok")
+            return
+
+        self.send_response(404)
+        self.end_headers()
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+
+def start_healthcheck_server() -> None:
+    server = ThreadingHTTPServer(("0.0.0.0", HEALTHCHECK_PORT), HealthHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    logger.info("Health check endpoint listening on port %s%s", HEALTHCHECK_PORT, HEALTHCHECK_PATH)
 
 
 def env_bool(value: str) -> bool:
@@ -245,6 +272,7 @@ def main() -> None:
         raise SystemExit(f"Configured path is not a directory: {root_path}")
 
     logger.info("Starting alac-to-flac-docker version %s", APP_VERSION)
+    start_healthcheck_server()
     logger.info("Processing existing .m4a files in %s", root_path)
     process_existing_files(root_path, include_subfolders)
     watch_for_changes(root_path, include_subfolders, poll_interval_seconds)
