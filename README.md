@@ -12,7 +12,8 @@ Containerized watcher that converts `.m4a` (ALAC) files to lossless `.flac` file
 
 - Reads `path` environment variable (string): directory to scan.
 - Reads `subfolder` environment variable (boolean): if `true`, scan and watch recursively.
-- Reads `POLL_INTERVAL_SECONDS` environment variable (positive number, default: `2`): polling interval for change detection.
+- Reads `polldelayseconds` environment variable (positive number, default: `60`): polling interval for change detection.
+- Also accepts `POLL_INTERVAL_SECONDS` as a backward-compatible alias.
 - Reads `TZ` environment variable (string, optional): sets process timezone for logs and runtime behavior.
 - Reads `PUID` and `PGID` environment variables (non-negative integers, optional): when both are set, the process switches user/group at startup to match host file ownership.
 - Converts existing `.m4a` files at startup.
@@ -36,7 +37,7 @@ docker run --rm \
   -e PGID=1000 \
   -e path=/music \
   -e subfolder=true \
-  -e POLL_INTERVAL_SECONDS=2 \
+  -e polldelayseconds=60 \
   -v /host/music:/music \
   alac-to-flac-docker
 ```
@@ -55,5 +56,5 @@ On pull requests, it builds without pushing.
 ## Local run
 
 ```bash
-TZ=America/New_York PUID=1000 PGID=1000 path=/absolute/path/to/music subfolder=true POLL_INTERVAL_SECONDS=2 python app.py
+TZ=America/New_York PUID=1000 PGID=1000 path=/absolute/path/to/music subfolder=true polldelayseconds=60 python app.py
 ```
