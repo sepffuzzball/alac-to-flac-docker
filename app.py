@@ -12,15 +12,33 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-POLL_INTERVAL_SECONDS = 2
+
+def get_env(name: str) -> Optional[str]:
+    return os.getenv(name) or os.getenv(name.upper())
+
+
+APP_VERSION = get_env("APP_VERSION") or "0.1.0"
+DEFAULT_POLL_INTERVAL_SECONDS = 2.0
 
 
 def env_bool(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
-def get_env(name: str) -> Optional[str]:
-    return os.getenv(name) or os.getenv(name.upper())
+def get_poll_interval_seconds() -> float:
+    raw = get_env("POLL_INTERVAL_SECONDS")
+    if raw is None or raw.strip() == "":
+        return DEFAULT_POLL_INTERVAL_SECONDS
+
+    try:
+        value = float(raw)
+    except ValueError:
+        raise SystemExit("POLL_INTERVAL_SECONDS must be a positive number")
+
+    if value <= 0:
+        raise SystemExit("POLL_INTERVAL_SECONDS must be greater than 0")
+
+    return value
 
 
 def ffprobe_stream_info(file_path: Path) -> tuple[Optional[int], Optional[int]]:
@@ -111,10 +129,15 @@ def process_existing_files(root_path: Path, include_subfolders: bool) -> None:
         convert_m4a_to_flac(file_path)
 
 
-def watch_for_changes(root_path: Path, include_subfolders: bool) -> None:
+def watch_for_changes(root_path: Path, include_subfolders: bool, poll_interval_seconds: float) -> None:
     seen_states: dict[Path, float] = {}
 
-    logger.info("Watching %s (subfolders=%s)", root_path, include_subfolders)
+    logger.info(
+        "Watching %s (subfolders=%s, poll_interval_seconds=%s)",
+        root_path,
+        include_subfolders,
+        poll_interval_seconds,
+    )
     while True:
         candidates = find_m4a_files(root_path, include_subfolders)
         current_set = set(candidates)
@@ -129,7 +152,7 @@ def watch_for_changes(root_path: Path, include_subfolders: bool) -> None:
             if previous is None or mtime > previous:
                 seen_states[file_path] = mtime
                 # wait one polling cycle to reduce chance of converting partial write
-                time.sleep(POLL_INTERVAL_SECONDS)
+                time.sleep(poll_interval_seconds)
                 if file_path.exists():
                     convert_m4a_to_flac(file_path)
 
@@ -137,7 +160,7 @@ def watch_for_changes(root_path: Path, include_subfolders: bool) -> None:
             if file_path not in current_set:
                 seen_states.pop(file_path, None)
 
-        time.sleep(POLL_INTERVAL_SECONDS)
+        time.sleep(poll_interval_seconds)
 
 
 def main() -> None:
@@ -146,14 +169,16 @@ def main() -> None:
         raise SystemExit("Missing required environment variable: path")
 
     include_subfolders = env_bool(get_env("subfolder") or "false")
+    poll_interval_seconds = get_poll_interval_seconds()
 
     root_path = Path(path_value).expanduser().resolve()
     if not root_path.exists() or not root_path.is_dir():
         raise SystemExit(f"Configured path is not a directory: {root_path}")
 
+    logger.info("Starting alac-to-flac-docker version %s", APP_VERSION)
     logger.info("Processing existing .m4a files in %s", root_path)
     process_existing_files(root_path, include_subfolders)
-    watch_for_changes(root_path, include_subfolders)
+    watch_for_changes(root_path, include_subfolders, poll_interval_seconds)
 
 
 if __name__ == "__main__":
