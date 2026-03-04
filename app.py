@@ -2,6 +2,7 @@ import logging
 import os
 import subprocess
 import time
+import pwd
 from pathlib import Path
 from typing import Optional
 
@@ -17,7 +18,7 @@ def get_env(name: str) -> Optional[str]:
     return os.getenv(name) or os.getenv(name.upper())
 
 
-APP_VERSION = get_env("APP_VERSION") or "0.1.0"
+APP_VERSION = get_env("APP_VERSION") or "0.1.1"
 DEFAULT_POLL_INTERVAL_SECONDS = 2.0
 
 
@@ -39,6 +40,71 @@ def get_poll_interval_seconds() -> float:
         raise SystemExit("POLL_INTERVAL_SECONDS must be greater than 0")
 
     return value
+
+
+def parse_id_env(name: str) -> Optional[int]:
+    raw = get_env(name)
+    if raw is None or raw.strip() == "":
+        return None
+
+    value = raw.strip()
+    if not value.isdigit():
+        raise SystemExit(f"{name} must be a non-negative integer")
+
+    return int(value)
+
+
+def apply_timezone() -> None:
+    timezone = get_env("TZ")
+    if timezone is None or timezone.strip() == "":
+        return
+
+    os.environ["TZ"] = timezone.strip()
+    if hasattr(time, "tzset"):
+        try:
+            time.tzset()
+        except OSError as exc:
+            raise SystemExit(f"Failed to apply TZ={timezone!r}: {exc}")
+
+
+def apply_runtime_identity() -> None:
+    target_uid = parse_id_env("PUID")
+    target_gid = parse_id_env("PGID")
+
+    if target_uid is None and target_gid is None:
+        return
+
+    if target_uid is None or target_gid is None:
+        raise SystemExit("PUID and PGID must be provided together")
+
+    current_uid = os.getuid()
+    current_gid = os.getgid()
+
+    if target_uid == current_uid and target_gid == current_gid:
+        logger.info("Running with uid=%s gid=%s", current_uid, current_gid)
+        return
+
+    if current_uid != 0:
+        raise SystemExit(
+            "Unable to change runtime identity from a non-root process. "
+            "Start the container as root or use --user to set uid:gid directly."
+        )
+
+    try:
+        try:
+            user_name = pwd.getpwuid(target_uid).pw_name
+            os.initgroups(user_name, target_gid)
+        except KeyError:
+            os.setgroups([target_gid])
+
+        os.setgid(target_gid)
+        os.setuid(target_uid)
+    except (PermissionError, OSError) as exc:
+        raise SystemExit(
+            f"Unable to switch to PUID={target_uid} PGID={target_gid}: {exc}"
+        )
+
+    logger.info("Running with uid=%s gid=%s", os.getuid(), os.getgid())
 
 
 def ffprobe_stream_info(file_path: Path) -> tuple[Optional[int], Optional[int]]:
@@ -164,6 +230,9 @@ def watch_for_changes(root_path: Path, include_subfolders: bool, poll_interval_s
 
 
 def main() -> None:
+    apply_timezone()
+    apply_runtime_identity()
+
     path_value = get_env("path")
     if not path_value:
         raise SystemExit("Missing required environment variable: path")
