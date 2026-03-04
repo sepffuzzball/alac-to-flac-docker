@@ -41,6 +41,66 @@ def get_poll_interval_seconds() -> float:
     return value
 
 
+def parse_id_env(name: str) -> Optional[int]:
+    raw = get_env(name)
+    if raw is None or raw.strip() == "":
+        return None
+
+    value = raw.strip()
+    if not value.isdigit():
+        raise SystemExit(f"{name} must be a non-negative integer")
+
+    return int(value)
+
+
+def apply_timezone() -> None:
+    timezone = get_env("TZ")
+    if timezone is None or timezone.strip() == "":
+        return
+
+    os.environ["TZ"] = timezone.strip()
+    if hasattr(time, "tzset"):
+        try:
+            time.tzset()
+        except OSError as exc:
+            raise SystemExit(f"Failed to apply TZ={timezone!r}: {exc}")
+
+
+def apply_runtime_identity() -> None:
+    target_uid = parse_id_env("PUID")
+    target_gid = parse_id_env("PGID")
+
+    if target_uid is None and target_gid is None:
+        return
+
+    current_uid = os.getuid()
+    current_gid = os.getgid()
+
+    if target_gid is not None and target_gid != current_gid:
+        try:
+            os.setgid(target_gid)
+        except PermissionError as exc:
+            raise SystemExit(
+                f"Unable to switch to PGID={target_gid}. Run container as root or use --user. ({exc})"
+            )
+
+    if target_uid is not None and target_uid != current_uid:
+        try:
+            os.setuid(target_uid)
+        except PermissionError as exc:
+            raise SystemExit(
+                f"Unable to switch to PUID={target_uid}. Run container as root or use --user. ({exc})"
+            )
+
+    logger.info(
+        "Running with uid=%s gid=%s (requested PUID=%s PGID=%s)",
+        os.getuid(),
+        os.getgid(),
+        target_uid,
+        target_gid,
+    )
+
+
 def ffprobe_stream_info(file_path: Path) -> tuple[Optional[int], Optional[int]]:
     cmd = [
         "ffprobe",
@@ -164,6 +224,9 @@ def watch_for_changes(root_path: Path, include_subfolders: bool, poll_interval_s
 
 
 def main() -> None:
+    apply_timezone()
+    apply_runtime_identity()
+
     path_value = get_env("path")
     if not path_value:
         raise SystemExit("Missing required environment variable: path")
