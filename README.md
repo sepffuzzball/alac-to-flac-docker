@@ -14,12 +14,15 @@ Containerized watcher that converts `.m4a` (ALAC) files to lossless `.flac` file
 - Reads `subfolder` environment variable (boolean): if `true`, scan and watch recursively.
 - Reads `POLL_INTERVAL_SECONDS` environment variable (positive number, default: `2`): polling interval for change detection.
 - Reads `TZ` environment variable (string, optional): sets process timezone for logs and runtime behavior.
-- Reads `PUID` and `PGID` environment variables (non-negative integers, optional): switches process user/group at startup to match host file ownership.
+- Reads `PUID` and `PGID` environment variables (non-negative integers, optional): when both are set, the process switches user/group at startup to match host file ownership.
 - Converts existing `.m4a` files at startup.
 - Replaces each source file with `<same-name>.flac`.
 - Continues watching for new/updated `.m4a` files and converts them automatically.
 
 The converter preserves source audio characteristics by carrying through source sample rate and bit depth where available.
+
+- `PUID` and `PGID` must be set together when used.
+- If `PUID`/`PGID` differ from the container's current identity, the process must start as root to perform the identity switch.
 
 ## Run with Docker
 

@@ -2,6 +2,7 @@ import logging
 import os
 import subprocess
 import time
+import pwd
 from pathlib import Path
 from typing import Optional
 
@@ -17,7 +18,7 @@ def get_env(name: str) -> Optional[str]:
     return os.getenv(name) or os.getenv(name.upper())
 
 
-APP_VERSION = get_env("APP_VERSION") or "0.1.0"
+APP_VERSION = get_env("APP_VERSION") or "0.1.1"
 DEFAULT_POLL_INTERVAL_SECONDS = 2.0
 
 
@@ -73,32 +74,37 @@ def apply_runtime_identity() -> None:
     if target_uid is None and target_gid is None:
         return
 
+    if target_uid is None or target_gid is None:
+        raise SystemExit("PUID and PGID must be provided together")
+
     current_uid = os.getuid()
     current_gid = os.getgid()
 
-    if target_gid is not None and target_gid != current_gid:
-        try:
-            os.setgid(target_gid)
-        except PermissionError as exc:
-            raise SystemExit(
-                f"Unable to switch to PGID={target_gid}. Run container as root or use --user. ({exc})"
-            )
+    if target_uid == current_uid and target_gid == current_gid:
+        logger.info("Running with uid=%s gid=%s", current_uid, current_gid)
+        return
 
-    if target_uid is not None and target_uid != current_uid:
-        try:
-            os.setuid(target_uid)
-        except PermissionError as exc:
-            raise SystemExit(
-                f"Unable to switch to PUID={target_uid}. Run container as root or use --user. ({exc})"
-            )
+    if current_uid != 0:
+        raise SystemExit(
+            "Unable to change runtime identity from a non-root process. "
+            "Start the container as root or use --user to set uid:gid directly."
+        )
 
-    logger.info(
-        "Running with uid=%s gid=%s (requested PUID=%s PGID=%s)",
-        os.getuid(),
-        os.getgid(),
-        target_uid,
-        target_gid,
-    )
+    try:
+        try:
+            user_name = pwd.getpwuid(target_uid).pw_name
+            os.initgroups(user_name, target_gid)
+        except KeyError:
+            os.setgroups([target_gid])
+
+        os.setgid(target_gid)
+        os.setuid(target_uid)
+    except (PermissionError, OSError) as exc:
+        raise SystemExit(
+            f"Unable to switch to PUID={target_uid} PGID={target_gid}: {exc}"
+        )
+
+    logger.info("Running with uid=%s gid=%s", os.getuid(), os.getgid())
 
 
 def ffprobe_stream_info(file_path: Path) -> tuple[Optional[int], Optional[int]]:
