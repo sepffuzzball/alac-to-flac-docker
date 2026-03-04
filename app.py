@@ -20,7 +20,7 @@ def get_env(name: str) -> Optional[str]:
     return os.getenv(name) or os.getenv(name.upper())
 
 
-APP_VERSION = get_env("APP_VERSION") or "0.1.2"
+APP_VERSION = get_env("APP_VERSION") or "0.1.3"
 DEFAULT_POLL_INTERVAL_SECONDS = 2.0
 HEALTHCHECK_PORT = 80
 HEALTHCHECK_PATH = "/healthz"
@@ -195,6 +195,7 @@ def convert_m4a_to_flac(source_file: Path) -> bool:
     if bits_per_raw_sample is not None:
         cmd.extend(["-bits_per_raw_sample", str(bits_per_raw_sample)])
 
+    cmd.extend(["-f", "flac"])
     cmd.append(str(temp_output))
 
     logger.info("Converting %s -> %s", source_file, target_file)
