@@ -20,8 +20,8 @@ def get_env(name: str) -> Optional[str]:
     return os.getenv(name) or os.getenv(name.upper())
 
 
-APP_VERSION = get_env("APP_VERSION") or "0.1.3"
-DEFAULT_POLL_INTERVAL_SECONDS = 2.0
+APP_VERSION = get_env("APP_VERSION") or "0.1.4"
+DEFAULT_POLL_INTERVAL_SECONDS = 60.0
 HEALTHCHECK_PORT = 80
 HEALTHCHECK_PATH = "/healthz"
 
@@ -54,17 +54,20 @@ def env_bool(value: str) -> bool:
 
 
 def get_poll_interval_seconds() -> float:
-    raw = get_env("POLL_INTERVAL_SECONDS")
+    raw = get_env("polldelayseconds")
+    if raw is None or raw.strip() == "":
+        raw = get_env("POLL_INTERVAL_SECONDS")
+
     if raw is None or raw.strip() == "":
         return DEFAULT_POLL_INTERVAL_SECONDS
 
     try:
         value = float(raw)
     except ValueError:
-        raise SystemExit("POLL_INTERVAL_SECONDS must be a positive number")
+        raise SystemExit("polldelayseconds must be a positive number")
 
     if value <= 0:
-        raise SystemExit("POLL_INTERVAL_SECONDS must be greater than 0")
+        raise SystemExit("polldelayseconds must be greater than 0")
 
     return value
 
