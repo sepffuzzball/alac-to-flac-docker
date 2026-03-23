@@ -20,8 +20,9 @@ def get_env(name: str) -> Optional[str]:
     return os.getenv(name) or os.getenv(name.upper())
 
 
-APP_VERSION = get_env("APP_VERSION") or "0.1.4"
+APP_VERSION = get_env("APP_VERSION") or "0.1.5"
 DEFAULT_POLL_INTERVAL_SECONDS = 60.0
+DEFAULT_MAX_CONVERSIONS_PER_SCAN = 20
 HEALTHCHECK_PORT = 80
 HEALTHCHECK_PATH = "/healthz"
 
@@ -70,6 +71,25 @@ def get_poll_interval_seconds() -> float:
         raise SystemExit("polldelayseconds must be greater than 0")
 
     return value
+
+
+def get_max_conversions_per_scan() -> int:
+    raw = get_env("maxconversionsperscan")
+    if raw is None or raw.strip() == "":
+        raw = get_env("MAX_CONVERSIONS_PER_SCAN")
+
+    if raw is None or raw.strip() == "":
+        return DEFAULT_MAX_CONVERSIONS_PER_SCAN
+
+    value = raw.strip()
+    if not value.isdigit():
+        raise SystemExit("maxconversionsperscan must be a positive integer")
+
+    parsed = int(value)
+    if parsed <= 0:
+        raise SystemExit("maxconversionsperscan must be greater than 0")
+
+    return parsed
 
 
 def parse_id_env(name: str) -> Optional[int]:
@@ -221,21 +241,45 @@ def find_m4a_files(root_path: Path, include_subfolders: bool) -> list[Path]:
     return [path for path in sorted(root_path.glob(pattern)) if path.is_file()]
 
 
-def process_existing_files(root_path: Path, include_subfolders: bool) -> None:
-    for file_path in find_m4a_files(root_path, include_subfolders):
-        convert_m4a_to_flac(file_path)
+def process_file_batch(file_paths: list[Path], max_conversions_per_scan: int) -> dict[Path, bool]:
+    results: dict[Path, bool] = {}
+    for file_path in file_paths[:max_conversions_per_scan]:
+        results[file_path] = convert_m4a_to_flac(file_path)
+    return results
 
 
-def watch_for_changes(root_path: Path, include_subfolders: bool, poll_interval_seconds: float) -> None:
+def process_existing_files(root_path: Path, include_subfolders: bool, max_conversions_per_scan: int) -> None:
+    while True:
+        candidates = find_m4a_files(root_path, include_subfolders)
+        if not candidates:
+            return
+
+        batch_results = process_file_batch(candidates, max_conversions_per_scan)
+        logger.info(
+            "Processed startup batch: converted=%s remaining=%s",
+            sum(batch_results.values()),
+            max(0, len(candidates) - max_conversions_per_scan),
+        )
+
+
+def watch_for_changes(
+    root_path: Path,
+    include_subfolders: bool,
+    poll_interval_seconds: float,
+    max_conversions_per_scan: int,
+) -> None:
     seen_states: dict[Path, float] = {}
+    ready_at: dict[Path, float] = {}
 
     logger.info(
-        "Watching %s (subfolders=%s, poll_interval_seconds=%s)",
+        "Watching %s (subfolders=%s, poll_interval_seconds=%s, max_conversions_per_scan=%s)",
         root_path,
         include_subfolders,
         poll_interval_seconds,
+        max_conversions_per_scan,
     )
     while True:
+        now = time.time()
         candidates = find_m4a_files(root_path, include_subfolders)
         current_set = set(candidates)
 
@@ -248,14 +292,32 @@ def watch_for_changes(root_path: Path, include_subfolders: bool, poll_interval_s
             previous = seen_states.get(file_path)
             if previous is None or mtime > previous:
                 seen_states[file_path] = mtime
-                # wait one polling cycle to reduce chance of converting partial write
-                time.sleep(poll_interval_seconds)
-                if file_path.exists():
-                    convert_m4a_to_flac(file_path)
+                ready_at[file_path] = now + poll_interval_seconds
+
+        eligible_files = [
+            file_path
+            for file_path in candidates
+            if file_path in ready_at and ready_at[file_path] <= now
+        ]
+        batch_results = process_file_batch(eligible_files, max_conversions_per_scan)
+        for file_path, converted in batch_results.items():
+            if converted or not file_path.exists():
+                ready_at.pop(file_path, None)
+            if not file_path.exists():
+                seen_states.pop(file_path, None)
+
+        if eligible_files:
+            logger.info(
+                "Processed watch batch: eligible=%s converted=%s deferred=%s",
+                len(eligible_files),
+                sum(batch_results.values()),
+                max(0, len(eligible_files) - max_conversions_per_scan),
+            )
 
         for file_path in list(seen_states.keys()):
             if file_path not in current_set:
                 seen_states.pop(file_path, None)
+                ready_at.pop(file_path, None)
 
         time.sleep(poll_interval_seconds)
 
@@ -270,6 +332,7 @@ def main() -> None:
 
     include_subfolders = env_bool(get_env("subfolder") or "false")
     poll_interval_seconds = get_poll_interval_seconds()
+    max_conversions_per_scan = get_max_conversions_per_scan()
 
     root_path = Path(path_value).expanduser().resolve()
     if not root_path.exists() or not root_path.is_dir():
@@ -278,8 +341,13 @@ def main() -> None:
     logger.info("Starting alac-to-flac-docker version %s", APP_VERSION)
     start_healthcheck_server()
     logger.info("Processing existing .m4a files in %s", root_path)
-    process_existing_files(root_path, include_subfolders)
-    watch_for_changes(root_path, include_subfolders, poll_interval_seconds)
+    process_existing_files(root_path, include_subfolders, max_conversions_per_scan)
+    watch_for_changes(
+        root_path,
+        include_subfolders,
+        poll_interval_seconds,
+        max_conversions_per_scan,
+    )
 
 
 if __name__ == "__main__":
